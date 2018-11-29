@@ -1,11 +1,13 @@
 package br.edu.ulbra.election.voter.service;
 
+import br.edu.ulbra.election.voter.client.ElectionClientService;
 import br.edu.ulbra.election.voter.exception.GenericOutputException;
 import br.edu.ulbra.election.voter.input.v1.VoterInput;
 import br.edu.ulbra.election.voter.model.Voter;
 import br.edu.ulbra.election.voter.output.v1.GenericOutput;
 import br.edu.ulbra.election.voter.output.v1.VoterOutput;
 import br.edu.ulbra.election.voter.repository.VoterRepository;
+import feign.FeignException;
 import org.apache.commons.lang.StringUtils;
 import org.modelmapper.ModelMapper;
 import org.modelmapper.TypeToken;
@@ -16,6 +18,7 @@ import org.springframework.stereotype.Service;
 import java.lang.reflect.Type;
 import java.util.List;
 
+
 @Service
 public class VoterService {
 
@@ -25,15 +28,19 @@ public class VoterService {
 
     private final PasswordEncoder passwordEncoder;
 
+    private final ElectionClientService electionClientService;
+
     private static final String MESSAGE_INVALID_ID = "Invalid id";
     private static final String MESSAGE_VOTER_NOT_FOUND = "Voter not found";
 
     @Autowired
-    public VoterService(VoterRepository voterRepository, ModelMapper modelMapper, PasswordEncoder passwordEncoder){
+    public VoterService(VoterRepository voterRepository, ModelMapper modelMapper, PasswordEncoder passwordEncoder, ElectionClientService electionClientService) {
         this.voterRepository = voterRepository;
         this.modelMapper = modelMapper;
         this.passwordEncoder = passwordEncoder;
+        this.electionClientService = electionClientService;
     }
+
 
     public List<VoterOutput> getAll(){
         Type voterOutputListType = new TypeToken<List<VoterOutput>>(){}.getType();
@@ -41,7 +48,7 @@ public class VoterService {
     }
 
     public VoterOutput create(VoterInput voterInput) {
-        validateInput(voterInput, false);
+        validateInput(voterInput, false, null);
         checkEmailDuplicate(voterInput.getEmail(), null);
         Voter voter = modelMapper.map(voterInput, Voter.class);
         voter.setPassword(passwordEncoder.encode(voter.getPassword()));
@@ -66,7 +73,7 @@ public class VoterService {
         if (voterId == null){
             throw new GenericOutputException(MESSAGE_INVALID_ID);
         }
-        validateInput(voterInput, true);
+        validateInput(voterInput, true, voterId);
         checkEmailDuplicate(voterInput.getEmail(), voterId);
 
         Voter voter = voterRepository.findById(voterId).orElse(null);
@@ -92,10 +99,22 @@ public class VoterService {
         if (voter == null){
             throw new GenericOutputException(MESSAGE_VOTER_NOT_FOUND);
         }
-
+        checkVote(voterId);
         voterRepository.delete(voter);
 
         return new GenericOutput("Voter deleted");
+    }
+    private void checkVote(Long id) {
+        try {
+            Boolean voto = electionClientService.getById(id);
+            if (voto) {
+                throw new GenericOutputException("This voter already has a vote");
+            }
+        } catch (FeignException e) {
+            if (e.status() == 500) {
+                throw new GenericOutputException("Invalid Election");
+            }
+        }
     }
 
     private void checkEmailDuplicate(String email, Long currentVoter){
@@ -105,15 +124,36 @@ public class VoterService {
         }
     }
 
-    private void validateInput(VoterInput voterInput, boolean isUpdate){
-        if (StringUtils.isBlank(voterInput.getEmail())){
+    private void validateInput(VoterInput voterInput, boolean isUpdate, Long voterId) {
+        Voter voterValidate;
+        String[] palavras;
+        if (StringUtils.isBlank(voterInput.getEmail())) {
             throw new GenericOutputException("Invalid email");
         }
-        if (StringUtils.isBlank(voterInput.getName()) || voterInput.getName().trim().length() < 5 || !voterInput.getName().trim().contains(" ")) {
+        if (isUpdate) {
+            voterValidate = voterRepository.findById(voterId).orElse(null);
+            if (voterValidate != null) {
+                if (!voterValidate.getEmail().equals(voterInput.getEmail())) {
+                    if (voterRepository.findFirstByEmail(voterInput.getEmail()) != null) {
+                        throw new GenericOutputException("Invalid email");
+                    }
+                }
+            }
+        } else if (voterRepository.findFirstByEmail(voterInput.getEmail()) != null) {
+            throw new GenericOutputException("Invalid email");
+        }
+        if (StringUtils.isBlank(voterInput.getName())) {
             throw new GenericOutputException("Invalid name");
         }
-        if (!StringUtils.isBlank(voterInput.getPassword())){
-            if (!voterInput.getPassword().equals(voterInput.getPasswordConfirm())){
+        if (voterInput.getName().length() < 5) {
+            throw new GenericOutputException("Invalid name. Name must be at least 5 characters.");
+        }
+        palavras = voterInput.getName().split(" ");
+        if (palavras.length < 2) {
+            throw new GenericOutputException("Invalid name. The name must have at least one last name.");
+        }
+        if (!StringUtils.isBlank(voterInput.getPassword())) {
+            if (!voterInput.getPassword().equals(voterInput.getPasswordConfirm())) {
                 throw new GenericOutputException("Passwords doesn't match");
             }
         } else {
@@ -124,3 +164,4 @@ public class VoterService {
     }
 
 }
+
