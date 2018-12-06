@@ -45,7 +45,7 @@ public class VoterService {
     }
 
     public VoterOutput create(VoterInput voterInput) {
-        validateInput(voterInput, false);
+        validateInput(voterInput, false, null);
         checkEmailDuplicate(voterInput.getEmail(), null);
         Voter voter = modelMapper.map(voterInput, Voter.class);
         voter.setPassword(passwordEncoder.encode(voter.getPassword()));
@@ -70,7 +70,7 @@ public class VoterService {
         if (voterId == null){
             throw new GenericOutputException(MESSAGE_INVALID_ID);
         }
-        validateInput(voterInput, true);
+        validateInput(voterInput, true, voterId);
         checkEmailDuplicate(voterInput.getEmail(), voterId);
 
         Voter voter = voterRepository.findById(voterId).orElse(null);
@@ -114,12 +114,27 @@ public class VoterService {
         }
     }
 
-    private void validateInput(VoterInput voterInput, boolean isUpdate){
+    private void validateInput(VoterInput voterInput, boolean isUpdate, Long voterId){
+        Voter validate;
         if (StringUtils.isBlank(voterInput.getEmail())){
+            throw new GenericOutputException("Invalid email");
+        }
+        if (isUpdate) {
+            validate = voterRepository.findById(voterId).orElse(null);
+            if (validate != null) {
+                if (!validate.getEmail().equals(voterInput.getEmail()) && (voterRepository.findFirstByEmail(voterInput.getEmail()) != null)) {
+                        throw new GenericOutputException("Invalid email");
+
+                }
+            }
+        } else if (voterRepository.findFirstByEmail(voterInput.getEmail()) != null) {
             throw new GenericOutputException("Invalid email");
         }
         if (StringUtils.isBlank(voterInput.getName()) || voterInput.getName().trim().length() < 5 || !voterInput.getName().trim().contains(" ")) {
             throw new GenericOutputException("Invalid name");
+        }
+        if (voterInput.getName().split(" ").length < 2) {
+            throw new GenericOutputException("Invalid name. There must be at least one last name.");
         }
         if (!StringUtils.isBlank(voterInput.getPassword())){
             if (!voterInput.getPassword().equals(voterInput.getPasswordConfirm())){
